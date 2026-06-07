@@ -8,7 +8,7 @@ import threading
 import queue
 import tempfile
 import argparse
-from faster_whisper import WhisperModel
+import mlx_whisper
 from deep_translator import GoogleTranslator
 
 LANGUAGES = {
@@ -18,12 +18,20 @@ LANGUAGES = {
     "french": "fr", "german": "de",
 }
 
+MODELS = {
+    "tiny":            "mlx-community/whisper-tiny-mlx",
+    "small":           "mlx-community/whisper-small-mlx",
+    "medium":          "mlx-community/whisper-medium-mlx",
+    "large-v3":        "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo":  "mlx-community/whisper-large-v3-turbo",
+}
+
 def parse_args():
     p = argparse.ArgumentParser(description="Traductor de audio en tiempo real")
     p.add_argument("--lang", default="auto", choices=LANGUAGES.keys(), help="Idioma fuente (default: auto)")
     p.add_argument("--target", default="es", help="Idioma destino (default: es)")
-    p.add_argument("--model", default="small", choices=["tiny","base","small","medium","large-v2","large-v3","large-v3-turbo"], help="Modelo Whisper")
-    p.add_argument("--chunk", type=int, default=10, help="Segundos por chunk (default: 10)")
+    p.add_argument("--model", default="large-v3-turbo", choices=MODELS.keys(), help="Modelo Whisper")
+    p.add_argument("--chunk", type=int, default=8, help="Segundos por chunk (default: 8)")
     p.add_argument("--device", type=int, default=None, help="ID del dispositivo de entrada")
     p.add_argument("--list-devices", action="store_true", help="Listar dispositivos y salir")
     return p.parse_args()
@@ -50,11 +58,10 @@ def main():
     else:
         device_id = args.device
 
-    print(f"\nCargando modelo '{args.model}'...")
-    modelo = WhisperModel(args.model, device="cpu", compute_type="int8")
-
+    model_path = MODELS[args.model]
     idioma_fuente = LANGUAGES.get(args.lang)
 
+    print(f"\nModelo: {args.model} (MLX — Apple Silicon)")
     print(f"Idioma fuente: {args.lang}")
     print(f"Traduciendo a: {args.target}")
     print(f"Chunk: {args.chunk}s")
@@ -76,9 +83,13 @@ def main():
             tmp = tempfile.mktemp(suffix=".wav")
             wav.write(tmp, FS, (audio * 32767).astype(np.int16))
 
-            segments, info = modelo.transcribe(tmp, language=idioma_fuente, beam_size=5)
-            texto = " ".join(s.text for s in segments).strip()
-            lang_detectado = info.language
+            resultado = mlx_whisper.transcribe(
+                tmp,
+                path_or_hf_repo=model_path,
+                language=idioma_fuente,
+            )
+            texto = resultado["text"].strip()
+            lang_detectado = resultado.get("language", "?")
 
             if texto:
                 traducido = GoogleTranslator(source='auto', target=args.target).translate(texto)
