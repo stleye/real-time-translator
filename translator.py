@@ -3,28 +3,27 @@ warnings.filterwarnings("ignore")
 
 import numpy as np
 import sounddevice as sd
-import whisper
 import scipy.io.wavfile as wav
 import threading
 import queue
 import tempfile
-import sys
 import argparse
+from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator
 
 LANGUAGES = {
-    "auto": None, "chinese": "Chinese", "english": "English",
-    "spanish": "Spanish", "portuguese": "Portuguese", "japanese": "Japanese",
-    "korean": "Korean", "arabic": "Arabic", "russian": "Russian",
-    "french": "French", "german": "German",
+    "auto": None, "chinese": "zh", "english": "en",
+    "spanish": "es", "portuguese": "pt", "japanese": "ja",
+    "korean": "ko", "arabic": "ar", "russian": "ru",
+    "french": "fr", "german": "de",
 }
 
 def parse_args():
     p = argparse.ArgumentParser(description="Traductor de audio en tiempo real")
     p.add_argument("--lang", default="auto", choices=LANGUAGES.keys(), help="Idioma fuente (default: auto)")
     p.add_argument("--target", default="es", help="Idioma destino (default: es)")
-    p.add_argument("--model", default="small", choices=["tiny","base","small","medium","large"], help="Modelo Whisper")
-    p.add_argument("--chunk", type=int, default=15, help="Segundos por chunk (default: 15)")
+    p.add_argument("--model", default="small", choices=["tiny","base","small","medium","large-v2","large-v3","large-v3-turbo"], help="Modelo Whisper")
+    p.add_argument("--chunk", type=int, default=10, help="Segundos por chunk (default: 10)")
     p.add_argument("--device", type=int, default=None, help="ID del dispositivo de entrada")
     p.add_argument("--list-devices", action="store_true", help="Listar dispositivos y salir")
     return p.parse_args()
@@ -51,11 +50,10 @@ def main():
     else:
         device_id = args.device
 
-    print(f"\nCargando modelo Whisper '{args.model}'...")
-    modelo = whisper.load_model(args.model)
+    print(f"\nCargando modelo '{args.model}'...")
+    modelo = WhisperModel(args.model, device="cpu", compute_type="int8")
 
     idioma_fuente = LANGUAGES.get(args.lang)
-    tarea = "translate" if idioma_fuente != "Spanish" else "transcribe"
 
     print(f"Idioma fuente: {args.lang}")
     print(f"Traduciendo a: {args.target}")
@@ -78,19 +76,12 @@ def main():
             tmp = tempfile.mktemp(suffix=".wav")
             wav.write(tmp, FS, (audio * 32767).astype(np.int16))
 
-            opciones = {"task": tarea}
-            if idioma_fuente:
-                opciones["language"] = idioma_fuente
-
-            resultado = modelo.transcribe(tmp, **opciones)
-            texto = resultado["text"].strip()
+            segments, info = modelo.transcribe(tmp, language=idioma_fuente, beam_size=5)
+            texto = " ".join(s.text for s in segments).strip()
+            lang_detectado = info.language
 
             if texto:
-                lang_detectado = resultado.get("language", "?")
-                if tarea == "translate":
-                    traducido = GoogleTranslator(source='en', target=args.target).translate(texto)
-                else:
-                    traducido = GoogleTranslator(source='auto', target=args.target).translate(texto)
+                traducido = GoogleTranslator(source='auto', target=args.target).translate(texto)
                 print(f"[{lang_detectado}] → {traducido}\n")
 
     hilo = threading.Thread(target=procesar, daemon=True)
