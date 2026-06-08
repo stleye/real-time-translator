@@ -10,6 +10,7 @@ import threading
 import queue
 import tempfile
 import argparse
+from multiprocessing import Process, Queue as MPQueue
 import torch
 import mlx_whisper
 from deep_translator import GoogleTranslator
@@ -141,6 +142,13 @@ def main():
             except queue.Full:
                 print("[VAD] cola llena, descartando chunk")
 
+    def _worker_transcribe(audio_path, model_path, language, result_q):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        import warnings; warnings.filterwarnings("ignore")
+        import mlx_whisper
+        r = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model_path, language=language)
+        result_q.put(r)
+
     def procesar():
         while True:
             audio = cola.get()
@@ -150,11 +158,21 @@ def main():
             tmp = tempfile.mktemp(suffix=".wav")
             wav.write(tmp, FS, (audio * 32767).astype(np.int16))
 
-            resultado = mlx_whisper.transcribe(
-                tmp,
-                path_or_hf_repo=model_path,
-                language=idioma_fuente,
-            )
+            result_q = MPQueue()
+            p = Process(target=_worker_transcribe, args=(tmp, model_path, idioma_fuente, result_q), daemon=True)
+            p.start()
+            p.join(timeout=20)
+
+            if p.is_alive():
+                print("[timeout] Whisper tardó demasiado, descartando")
+                p.terminate()
+                p.join()
+                continue
+
+            if result_q.empty():
+                continue
+
+            resultado = result_q.get()
             texto = resultado["text"].strip()
             lang_detectado = resultado.get("language", "?")
 
@@ -163,7 +181,7 @@ def main():
                 if len(palabras) > 4:
                     palabra_mas_comun = max(set(palabras), key=palabras.count)
                     if palabras.count(palabra_mas_comun) / len(palabras) > 0.5:
-                        print(f"[alucinación descartada]")
+                        print("[alucinación descartada]")
                         continue
                 traducido = GoogleTranslator(source='auto', target=args.target).translate(texto)
                 print(f"[{lang_detectado}] → {traducido}\n")
