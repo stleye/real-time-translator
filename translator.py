@@ -8,6 +8,7 @@ import threading
 import queue
 import tempfile
 import argparse
+import torch
 import mlx_whisper
 from deep_translator import GoogleTranslator
 from silero_vad import load_silero_vad, get_speech_timestamps
@@ -25,6 +26,7 @@ MODELS = {
     "medium":         "mlx-community/whisper-medium-mlx",
     "large-v3":       "mlx-community/whisper-large-v3-mlx",
     "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+    "large-v3-turbo-q4": "mlx-community/whisper-large-v3-turbo-q4",
 }
 
 FS = 16000
@@ -34,7 +36,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Traductor de audio en tiempo real")
     p.add_argument("--lang", default="auto", choices=LANGUAGES.keys())
     p.add_argument("--target", default="es")
-    p.add_argument("--model", default="large-v3-turbo", choices=MODELS.keys())
+    p.add_argument("--model", default="large-v3-turbo-q4", choices=MODELS.keys())
     p.add_argument("--device", type=int, default=None)
     p.add_argument("--list-devices", action="store_true")
     p.add_argument("--min-seconds", type=float, default=1.0, help="Segundos mínimos de voz antes de traducir")
@@ -95,7 +97,6 @@ def main():
             bloque_norm = bloque
 
         # Detectar voz con Silero VAD
-        import torch
         tensor = torch.from_numpy(bloque_norm).float()
         prob = vad(tensor, FS).item()
         hay_voz = prob > 0.5
