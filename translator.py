@@ -121,9 +121,9 @@ def main():
                 nivel = np.max(np.abs(audio))
                 if nivel > 0.001:
                     audio = audio * (0.9 / nivel)
-                if not cola.full():
-                    cola.put(audio)
-                else:
+                try:
+                    cola.put_nowait(audio)
+                except queue.Full:
                     print("[VAD] cola llena, descartando chunk")
 
         # Corte forzado si el buffer crece demasiado (ej: música continua)
@@ -136,9 +136,9 @@ def main():
             nivel = np.max(np.abs(audio))
             if nivel > 0.001:
                 audio = audio * (0.9 / nivel)
-            if not cola.full():
-                cola.put(audio)
-            else:
+            try:
+                cola.put_nowait(audio)
+            except queue.Full:
                 print("[VAD] cola llena, descartando chunk")
 
     def procesar():
