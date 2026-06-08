@@ -1,5 +1,7 @@
 import warnings
 warnings.filterwarnings("ignore")
+import os
+os.environ["HF_HUB_OFFLINE"] = "1"
 
 import numpy as np
 import sounddevice as sd
