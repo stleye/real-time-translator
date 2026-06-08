@@ -16,6 +16,13 @@ import mlx_whisper
 from deep_translator import GoogleTranslator
 from silero_vad import load_silero_vad, get_speech_timestamps
 
+def _worker_transcribe(audio_path, model_path, language, result_q):
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    import warnings; warnings.filterwarnings("ignore")
+    import mlx_whisper
+    r = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model_path, language=language)
+    result_q.put(r)
+
 LANGUAGES = {
     "auto": None, "chinese": "zh", "english": "en",
     "spanish": "es", "portuguese": "pt", "japanese": "ja",
@@ -141,13 +148,6 @@ def main():
                 cola.put_nowait(audio)
             except queue.Full:
                 print("[VAD] cola llena, descartando chunk")
-
-    def _worker_transcribe(audio_path, model_path, language, result_q):
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        import warnings; warnings.filterwarnings("ignore")
-        import mlx_whisper
-        r = mlx_whisper.transcribe(audio_path, path_or_hf_repo=model_path, language=language)
-        result_q.put(r)
 
     def procesar():
         while True:
