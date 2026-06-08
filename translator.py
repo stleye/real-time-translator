@@ -83,6 +83,7 @@ def main():
     voz_detectada = False
     silence_bloques_max = int(args.silence_seconds * FS / BLOCK)
     min_bloques = int(args.min_seconds * FS / BLOCK)
+    max_bloques = int(15 * FS / BLOCK)  # cortar a los 15s como máximo
 
     def callback(indata, frames, time, status):
         nonlocal silencio_bloques, voz_detectada
@@ -117,6 +118,16 @@ def main():
                 if nivel > 0.001:
                     audio = audio * (0.9 / nivel)
                 cola.put(audio)
+
+        # Corte forzado si el buffer crece demasiado (ej: música continua)
+        if len(audio_buffer) >= max_bloques:
+            audio = np.concatenate(audio_buffer)
+            audio_buffer.clear()
+            silencio_bloques = 0
+            nivel = np.max(np.abs(audio))
+            if nivel > 0.001:
+                audio = audio * (0.9 / nivel)
+            cola.put(audio)
 
     def procesar():
         while True:
