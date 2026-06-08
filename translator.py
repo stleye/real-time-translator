@@ -79,7 +79,7 @@ def main():
     print(f"Silencio para corte: {args.silence_seconds}s")
     print("\nEscuchando... Ctrl+C para detener.\n")
 
-    cola = queue.Queue()
+    cola = queue.Queue(maxsize=2)
     audio_buffer = []
     silencio_bloques = 0
     voz_detectada = False
@@ -121,7 +121,10 @@ def main():
                 nivel = np.max(np.abs(audio))
                 if nivel > 0.001:
                     audio = audio * (0.9 / nivel)
-                cola.put(audio)
+                if not cola.full():
+                    cola.put(audio)
+                else:
+                    print("[VAD] cola llena, descartando chunk")
 
         # Corte forzado si el buffer crece demasiado (ej: música continua)
         if len(audio_buffer) >= max_bloques:
@@ -133,7 +136,10 @@ def main():
             nivel = np.max(np.abs(audio))
             if nivel > 0.001:
                 audio = audio * (0.9 / nivel)
-            cola.put(audio)
+            if not cola.full():
+                cola.put(audio)
+            else:
+                print("[VAD] cola llena, descartando chunk")
 
     def procesar():
         while True:
@@ -153,6 +159,12 @@ def main():
             lang_detectado = resultado.get("language", "?")
 
             if texto:
+                palabras = texto.split()
+                if len(palabras) > 4:
+                    palabra_mas_comun = max(set(palabras), key=palabras.count)
+                    if palabras.count(palabra_mas_comun) / len(palabras) > 0.5:
+                        print(f"[alucinación descartada]")
+                        continue
                 traducido = GoogleTranslator(source='auto', target=args.target).translate(texto)
                 print(f"[{lang_detectado}] → {traducido}\n")
 
