@@ -10,6 +10,7 @@ import tempfile
 import argparse
 import mlx_whisper
 from deep_translator import GoogleTranslator
+from silero_vad import load_silero_vad, get_speech_timestamps
 
 LANGUAGES = {
     "auto": None, "chinese": "zh", "english": "en",
@@ -19,21 +20,25 @@ LANGUAGES = {
 }
 
 MODELS = {
-    "tiny":            "mlx-community/whisper-tiny-mlx",
-    "small":           "mlx-community/whisper-small-mlx",
-    "medium":          "mlx-community/whisper-medium-mlx",
-    "large-v3":        "mlx-community/whisper-large-v3-mlx",
-    "large-v3-turbo":  "mlx-community/whisper-large-v3-turbo",
+    "tiny":           "mlx-community/whisper-tiny-mlx",
+    "small":          "mlx-community/whisper-small-mlx",
+    "medium":         "mlx-community/whisper-medium-mlx",
+    "large-v3":       "mlx-community/whisper-large-v3-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
 }
+
+FS = 16000
+BLOCK = 512  # ~32ms por bloque
 
 def parse_args():
     p = argparse.ArgumentParser(description="Traductor de audio en tiempo real")
-    p.add_argument("--lang", default="auto", choices=LANGUAGES.keys(), help="Idioma fuente (default: auto)")
-    p.add_argument("--target", default="es", help="Idioma destino (default: es)")
-    p.add_argument("--model", default="large-v3-turbo", choices=MODELS.keys(), help="Modelo Whisper")
-    p.add_argument("--chunk", type=int, default=8, help="Segundos por chunk (default: 8)")
-    p.add_argument("--device", type=int, default=None, help="ID del dispositivo de entrada")
-    p.add_argument("--list-devices", action="store_true", help="Listar dispositivos y salir")
+    p.add_argument("--lang", default="auto", choices=LANGUAGES.keys())
+    p.add_argument("--target", default="es")
+    p.add_argument("--model", default="large-v3-turbo", choices=MODELS.keys())
+    p.add_argument("--device", type=int, default=None)
+    p.add_argument("--list-devices", action="store_true")
+    p.add_argument("--min-seconds", type=float, default=1.0, help="Segundos mínimos de voz antes de traducir")
+    p.add_argument("--silence-seconds", type=float, default=0.8, help="Segundos de silencio para cortar frase")
     return p.parse_args()
 
 def listar_dispositivos():
@@ -58,21 +63,59 @@ def main():
     else:
         device_id = args.device
 
+    print(f"\nCargando VAD...")
+    vad = load_silero_vad()
+
     model_path = MODELS[args.model]
     idioma_fuente = LANGUAGES.get(args.lang)
 
-    print(f"\nModelo: {args.model} (MLX — Apple Silicon)")
+    print(f"Modelo: {args.model} (MLX — Apple Silicon)")
     print(f"Idioma fuente: {args.lang}")
     print(f"Traduciendo a: {args.target}")
-    print(f"Chunk: {args.chunk}s")
+    print(f"Silencio para corte: {args.silence_seconds}s")
     print("\nEscuchando... Ctrl+C para detener.\n")
 
-    FS = 16000
     cola = queue.Queue()
-    buffer = []
+    audio_buffer = []
+    silencio_bloques = 0
+    voz_detectada = False
+    silence_bloques_max = int(args.silence_seconds * FS / BLOCK)
+    min_bloques = int(args.min_seconds * FS / BLOCK)
 
     def callback(indata, frames, time, status):
-        buffer.append(indata.copy())
+        nonlocal silencio_bloques, voz_detectada
+
+        bloque = indata[:, 0].copy()
+
+        # Normalizar para VAD
+        nivel = np.max(np.abs(bloque))
+        if nivel > 0.001:
+            bloque_norm = bloque / nivel * 0.9
+        else:
+            bloque_norm = bloque
+
+        # Detectar voz con Silero VAD
+        import torch
+        tensor = torch.from_numpy(bloque_norm).float()
+        prob = vad(tensor, FS).item()
+        hay_voz = prob > 0.5
+
+        if hay_voz:
+            audio_buffer.append(bloque)
+            silencio_bloques = 0
+            voz_detectada = True
+        elif voz_detectada:
+            audio_buffer.append(bloque)
+            silencio_bloques += 1
+            if silencio_bloques >= silence_bloques_max and len(audio_buffer) >= min_bloques:
+                audio = np.concatenate(audio_buffer)
+                audio_buffer.clear()
+                silencio_bloques = 0
+                voz_detectada = False
+                nivel = np.max(np.abs(audio))
+                if nivel > 0.001:
+                    audio = audio * (0.9 / nivel)
+                cola.put(audio)
 
     def procesar():
         while True:
@@ -100,18 +143,10 @@ def main():
 
     try:
         with sd.InputStream(samplerate=FS, channels=1, dtype='float32',
-                            device=device_id, callback=callback):
+                            blocksize=BLOCK, device=device_id, callback=callback):
+            print("VAD activo — esperando voz...\n")
             while True:
-                sd.sleep(args.chunk * 1000)
-                if buffer:
-                    audio = np.concatenate(buffer)
-                    buffer.clear()
-                    nivel = np.max(np.abs(audio))
-                    if nivel > 0.001:
-                        audio = audio * (0.9 / nivel)
-                        cola.put(audio)
-                    else:
-                        print("[silencio]")
+                sd.sleep(100)
     except KeyboardInterrupt:
         print("\nDetenido.")
         cola.put(None)
