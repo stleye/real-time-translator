@@ -120,8 +120,6 @@ def main():
             audio_buffer.append(bloque)
             silencio_bloques += 1
             if silencio_bloques >= silence_bloques_max and len(audio_buffer) >= min_bloques:
-                duracion = len(audio_buffer) * BLOCK / FS
-                print(f"[VAD] corte por silencio — {duracion:.1f}s acumulados")
                 audio = np.concatenate(audio_buffer)
                 audio_buffer.clear()
                 silencio_bloques = 0
@@ -136,8 +134,6 @@ def main():
 
         # Corte forzado si el buffer crece demasiado (ej: música continua)
         if len(audio_buffer) >= max_bloques:
-            duracion = len(audio_buffer) * BLOCK / FS
-            print(f"[VAD] corte forzado — {duracion:.1f}s acumulados, voz={voz_detectada}")
             audio = np.concatenate(audio_buffer)
             audio_buffer.clear()
             silencio_bloques = 0
